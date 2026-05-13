@@ -308,12 +308,7 @@ function ip_info($ip)
             $ip = $ip_address_array[$randomKey]["ip"];
         }
     }
-    usleep(1500000); // Пауза 1.5 секунды, чтобы не превысить лимит ip-api (45 запр/мин)
-    $ipinfo = json_decode(
-        @file_get_contents("ip-api.com" . $ip . "?fields=status,countryCode"),
-        true
-    );
-    return isset($ipinfo['status']) && $ipinfo['status'] === 'success' ? ['country' => $ipinfo['countryCode']] : ['country' => 'UN'];
+    return ['country' => 'UN'];
 }
 
 function get_flag($ip)
