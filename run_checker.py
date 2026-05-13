@@ -3,19 +3,31 @@ import json
 import os
 import re
 import socket
-import time
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
-# ================== НАСТРОЙКИ ЭМУЛЯЦИИ И ЧЕКЕРА ==================
-TEST_SITE = "google.com"  # Сайт проверки сквозного пинга
+# ================== НАСТРОЙКИ ПОД КУРСКУЮ ОБЛАСТЬ ==================
+# Оставлять только VLESS, так как VMess/Trojan в Курске забанены операторами
+ONLY_VLESS_REALITY = True  
 
-# Максимальный пинг в мс (от мобильной вышки РФ до Google через прокси)
-# Все, что выше 400мс или не открывается — удаляется
-MAX_PING_MS = 400  
+# Список проверенных международных SNI, которые пробивают ТСПУ в Курске
+ALLOWED_SNI = [
+    "samsung.com", 
+    "apple.com", 
+    "microsoft.com", 
+    "google.com", 
+    "cloudflare.com", 
+    "amazon.com", 
+    "dl.pki.goog",
+    "speedtest.net",
+    "amd.com",
+    "nvidia.com",
+    "epicgames.com",
+    "docker.com"
+]
 
-TIMEOUT_SEC = 3.0          # Лимит ожидания ответа оператора (в сек)
-THREADS = 30               # Количество потоков для проверки
+TIMEOUT_SEC = 2.0          # Таймаут на проверку порта
+THREADS = 50               # Скорость потоков
 # ===================================================================
 
 SOURCES = [
@@ -56,23 +68,6 @@ SOURCES = [
     "https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt"
 ]
 
-def get_ru_mobile_gateway():
-    print("[~] Подключение к шлюзу эмуляции сетей РФ...")
-    try:
-        url = "proxyscrape.com"
-        res = requests.get(url, timeout=5).json()
-        for p in res.get('proxies', []):
-            ip = p.get('ip')
-            port = p.get('port')
-            proto = p.get('protocol', 'http')
-            if p.get('ip_data', {}).get('countryCode') == 'RU' and proto in ['http', 'socks4', 'socks5']:
-                return f"{proto}://{ip}:{port}"
-    except: pass
-    return "http://85.193.81.236:8080" 
-
-RU_GATEWAY = get_ru_mobile_gateway()
-print(f"[+] Эмуляция запущена через российский шлюз: {RU_GATEWAY}")
-
 def b64_decode(s):
     s = s.strip().replace("\n", "").replace("\r", "")
     pad = len(s) % 4
@@ -82,36 +77,41 @@ def b64_decode(s):
 
 def parse_target(config):
     try:
-        if "vmess://" in config:
-            data = json.loads(b64_decode(config.replace("vmess://", "")))
-            return data.get("add"), int(data.get("port"))
         match = re.search(r'@([^:]+):(\d+)', config)
         if match: return match.group(1), int(match.group(2))
     except: pass
     return None, None
 
-def check_through_ru_carrier(config):
+def check_kursk_compatibility(config):
+    if ONLY_VLESS_REALITY and not config.startswith("vless://"):
+        return None
+
+    has_valid_sni = False
+    for sni in ALLOWED_SNI:
+        if f"sni={sni}" in config.lower() or f"peer={sni}" in config.lower():
+            has_valid_sni = True
+            break
+            
+    if "reality" in config.lower() and not has_valid_sni:
+        has_valid_sni = True
+
+    if ONLY_VLESS_REALITY and not has_valid_sni:
+        return None
+
     host, port = parse_target(config)
     if not host or not port: return None
     if not re.match(r'^[a-zA-Z0-9.-]+$', str(host)): return None
     
-    start_time = time.time()
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(TIMEOUT_SEC)
             s.connect((str(host), int(port)))
-            
-        ping_ms = int((time.time() - start_time) * 1000)
-        
-        if ping_ms <= MAX_PING_MS:
             return config
-        else:
-            return None
-    except:
+    except: 
         return None
 
 def main():
-    print("[+] Скачивание конфигураций...")
+    print("[+] Скачивание конфигураций из источников...")
     all_nodes = []
     for url in SOURCES:
         try:
@@ -124,16 +124,15 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} уникальных нод.")
-    print(f"[+] Тестирование до {TEST_SITE} через мобильные вышки РФ...")
+    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Фильтрация под Курскую область...")
 
     working_nodes = []
     with ThreadPoolExecutor(max_workers=THREADS) as executor:
-        results = executor.map(check_through_ru_carrier, unique_nodes)
+        results = executor.map(check_kursk_compatibility, unique_nodes)
         for r in results:
             if r: working_nodes.append(r)
 
-    print(f"[+] Фильтрация завершена! Прошли отбор из РФ: {len(working_nodes)} из {len(unique_nodes)}")
+    print(f"[+] Фильтрация завершена! Потенциально рабочих для Курска серверов: {len(working_nodes)} из {len(unique_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
@@ -142,7 +141,7 @@ def main():
         f.write(output_text)
     with open("merged_base64", "w", encoding="utf-8") as f:
         f.write(b64_output)
-    print("[+] Файлы подписок успешно обновлены.")
+    print("[+] Репозиторий успешно обновлен под мобильные сети Курска.")
 
 if __name__ == "__main__":
     main()
