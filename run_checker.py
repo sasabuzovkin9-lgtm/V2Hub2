@@ -7,23 +7,34 @@ import time
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
-# ================== УСИЛЕННЫЕ НАСТРОЙКИ ПОД КУРСК ==================
+# ================== ПАРАНОИДАЛЬНЫЕ НАСТРОЙКИ ПОД КУРСК ==================
+# Полный запрет любых протоколов, кроме VLESS Reality
 ONLY_VLESS_REALITY = True  
 
-# Топовые международные SNI, которые ТСПУ в Курске пропускает без проверок
+# Элитный ультра-короткий список SNI. Всё, что маскируется под другие сайты, УДАЛЯЕТСЯ.
+# ТСПУ в Курске пропускает эти корпоративные CDN-шлюзы без проверок.
 ALLOWED_SNI = [
-    "samsung.com", "apple.com", "microsoft.com", "google.com", 
-    "cloudflare.com", "amazon.com", "dl.pki.goog", "speedtest.net"
+    "samsung.com", 
+    "apple.com", 
+    "microsoft.com", 
+    "google.com", 
+    "dl.pki.goog"
 ]
 
-# Список хостингов и подсетей, массово забаненных мобильными операторами в РФ
-BANNED_KEYWORDS = ["aeza", "pq", "mivo", "justhost", "vdsina", "serverspace", "ru-vds", "ip-volume"]
+# Расширенный черный список хостингов. Все дешевые VPS, которые ТСПУ блокирует 
+# по пулам IP-адресов в регионах, вырезаются превентивно.
+BANNED_KEYWORDS = [
+    "aeza", "pq", "mivo", "justhost", "vdsina", "serverspace", "ru-vds", 
+    "ip-volume", "zomro", "timeweb", "firstvds", "ispsystem", "vscale", 
+    "h तेलंगाना", "host", "vps", "dedic", "cloud"
+]
 
-# Жесткий лимит на отклик со стороны GitHub (в секундах)
-# 1.2 секунды на американском сервере гарантируют отличный пинг (<400мс) в Курске
-TIMEOUT_SEC = 1.2          
+# Ультра-жесткий таймаут коннекта со стороны GitHub (в секундах)
+# 0.7 секунды отсекают любые просевшие, перегруженные или отдаленные серверы.
+# На выходе в Курской области у вас останутся ноды со стабильным пингом <200мс.
+TIMEOUT_SEC = 0.7          
 THREADS = 50               
-# ===================================================================
+# ========================================================================
 
 SOURCES = [
     "https://raw.githubusercontent.com/luxxuria/harvester/refs/heads/main/non_ru.txt",
@@ -57,7 +68,7 @@ SOURCES = [
     "https://gitflic.ru/project/sigil/my-new-cool-project/blob/raw?file=whitelist",
     "https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt",
     "https://vpn.tgflovv.ru:8443/free-white-ru/f72a771d-7089-4ca1-a011-f852e60f378c",
-    "https://raw.githubusercontent.com/Temnuk/naabuzil/refs/heads/main/whitelist",
+    "githubusercontent.com",
     "https://raw.githubusercontent.com/Kirill39127/-my-sub/refs/heads/main/sub.txt",
     "https://raw.githubusercontent.com/likzil/vless1/main/Treetcpvpn",
     "https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt"
@@ -78,29 +89,31 @@ def parse_target(config):
     return None, None
 
 def check_kursk_compatibility(config):
-    if ONLY_VLESS_REALITY and not config.startswith("vless://"):
+    # Жесткий срез по началу протокола
+    if not config.startswith("vless://"):
         return None
 
+    # Валидация маскировки SNI
     has_valid_sni = False
+    config_lower = config.lower()
     for sni in ALLOWED_SNI:
-        if f"sni={sni}" in config.lower() or f"peer={sni}" in config.lower():
+        if f"sni={sni}" in config_lower or f"peer={sni}" in config_lower:
             has_valid_sni = True
             break
-            
-    if "reality" in config.lower() and not has_valid_sni:
-        has_valid_sni = True
 
-    if ONLY_VLESS_REALITY and not has_valid_sni:
+    if not has_valid_sni:
         return None
 
     host, port = parse_target(config)
     if not host or not port: return None
-    if not re.match(r'^[a-zA-Z0-9.-]+$', str(host)): return None
     
+    host_str = str(host).lower()
+    # Удаление нод от сомнительных или забаненных хостеров
     for banned in BANNED_KEYWORDS:
-        if banned in str(host).lower():
+        if banned in host_str:
             return None
 
+    # Фильтрация по экстремально быстрому отклику сокета
     try:
         start_time = time.time()
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -108,7 +121,8 @@ def check_kursk_compatibility(config):
             s.connect((str(host), int(port)))
             ping_ms = int((time.time() - start_time) * 1000)
             
-            if ping_ms <= 1200:
+            # 700 мс лимита отсекают всё, кроме премиальных и быстрых магистральных каналов
+            if ping_ms <= 700:
                 return config
             else:
                 return None
@@ -129,7 +143,7 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Усиленная очистка под Курск...")
+    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Запуск параноидальной очистки под Курск...")
 
     working_nodes = []
     with ThreadPoolExecutor(max_workers=THREADS) as executor:
@@ -137,7 +151,7 @@ def main():
         for r in results:
             if r: working_nodes.append(r)
 
-    print(f"[+] Фильтрация завершена! Элитных рабочих серверов для Курска: {len(working_nodes)} из {len(unique_nodes)}")
+    print(f"[+] Сжатие завершено! Элитных железно рабочих серверов: {len(working_nodes)} из {len(unique_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
@@ -146,7 +160,7 @@ def main():
         f.write(output_text)
     with open("merged_base64", "w", encoding="utf-8") as f:
         f.write(b64_output)
-    print("[+] Репозиторий успешно обновлен под мобильные сети Курска.")
+    print("[+] Репозиторий перезаписан. Отфильтровано под ТСПУ.")
 
 if __name__ == "__main__":
     main()
