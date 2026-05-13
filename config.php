@@ -1,8 +1,7 @@
 <?php
 
-// Настройка ограничения времени ожидания (таймаут 5 секунд)
-default_socket_timeout = 20;
-ini_set('default_socket_timeout', 20);
+// Жесткое ограничение ожидания медленных сайтов (5 секунд)
+ini_set('default_socket_timeout', 25);
 
 $subscription_urls = [
     "https://raw.githubusercontent.com/luxxuria/harvester/refs/heads/main/non_ru.txt",
