@@ -3,20 +3,17 @@ import json
 import os
 import re
 import socket
-import time
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
-# ================== НАСТРОЙКИ ЧЕКЕРА И ФИЛЬТРАЦИИ ==================
-TEST_SITE = "google.com"  # Сайт, до которого измеряется пинг
+# ================== НАСТРОЙКИ ФИЛЬТРА ДЛЯ РФ ==================
+# Оставлять ТОЛЬКО VLESS (Reality/WS), так как они работают в РФ?
+# True - только VLESS, False - собирать все протоколы вместе
+ONLY_VLESS_REALITY = True  
 
-# МАКСИМАЛЬНО ДОПУСТИМЫЙ ПИНГ (в миллисекундах)
-# Все серверы с пингом выше этого значения будут УДАЛЕНЫ
-MAX_PING_MS = 400  
-
-TIMEOUT_SEC = 2.5          # Общий таймаут ожидания (в секундах)
-THREADS = 50               # Количество параллельных потоков
-# ===================================================================
+TIMEOUT_SEC = 2.0          
+THREADS = 50               
+# ==============================================================
 
 SOURCES = [
     "https://raw.githubusercontent.com/luxxuria/harvester/refs/heads/main/non_ru.txt",
@@ -65,22 +62,20 @@ def parse_target(config):
     except: pass
     return None, None
 
-def http_ping_check(config):
+def check_node(config):
+    if ONLY_VLESS_REALITY:
+        if not config.startswith("vless://"):
+            return None
+
     host, port = parse_target(config)
     if not host or not port: return None
     if not re.match(r'^[a-zA-Z0-9.-]+$', str(host)): return None
     
-    start_time = time.time()
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(TIMEOUT_SEC)
             s.connect((str(host), int(port)))
-            ping_ms = int((time.time() - start_time) * 1000)
-            
-            if ping_ms <= MAX_PING_MS:
-                return config
-            else:
-                return None
+            return config
     except: 
         return None
 
@@ -98,15 +93,15 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Измеряем пинг до {TEST_SITE}...")
+    print(f"[+] Собрано {len(unique_nodes)} нод. Очистка под мобильный интернет РФ...")
 
     working_nodes = []
     with ThreadPoolExecutor(max_workers=THREADS) as executor:
-        results = executor.map(http_ping_check, unique_nodes)
+        results = executor.map(check_node, unique_nodes)
         for r in results:
             if r: working_nodes.append(r)
 
-    print(f"[+] Фильтрация завершена! Быстрых рабочих серверов: {len(working_nodes)} из {len(unique_nodes)}")
+    print(f"[+] Фильтрация завершена! Потенциально рабочих для РФ серверов: {len(working_nodes)} из {len(unique_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
