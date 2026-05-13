@@ -3,25 +3,25 @@ import json
 import os
 import re
 import requests
+import urllib.parse
 
-# ================= НАСТРОЙКИ СВЕРХСТРОГОГО ФИЛЬТРА РФ =================
+# ================= МАКСИМАЛЬНЫЙ ФИЛЬТР И МОДИФИКАТОР ДЛЯ РФ =================
 ONLY_VLESS_REALITY = True  
 
-# Тотальный белый список SNI. Всё, что использует другие домены, БУДЕТ УДАЛЕНО.
-# Эти адреса согласованы с алгоритмами обхода ТСПУ мобильных операторов в Курске.
+# Бескомпромиссные SNI из ядра белых списков ТСПУ (сервисы авторизации и CDN)
 ALLOWED_SNI = [
     "samsung.com", "apple.com", "microsoft.com", "google.com", "dl.pki.goog",
     "sberbank.ru", "vk.com", "yandex.ru", "wildberries.ru", "selectel.ru",
     "timeweb.ru", "beget.com", "cdnvideo.ru", "edgecenter.ru", "speedtest.net"
 ]
 
-# Жёсткий бан хостинг-провайдеров, заблокированных по IP в Курской области
+# Полный бан подсетей хостингов, заблокированных регулятором в Курской области
 BANNED_KEYWORDS = [
     "aeza", "pq", "mivo", "justhost", "vdsina", "serverspace", "ru-vds", 
     "ip-volume", "zomro", "timeweb", "firstvds", "ispsystem", "vscale", 
     "cloud", "vps", "dedic", "host"
 ]
-# =========================================================================
+# ============================================================================
 
 SOURCES = [
     "https://raw.githubusercontent.com/luxxuria/harvester/refs/heads/main/non_ru.txt",
@@ -75,11 +75,11 @@ def parse_target(config):
     except: pass
     return None, None
 
-def strict_ru_filter(config):
+def transform_and_mutate(config):
     if not config.startswith("vless://"):
         return None
 
-    # Валидация SNI по жесткому списку дозволенных корпоративных шлюзов
+    # 1. Проверка валидности маскировки
     has_valid_sni = False
     config_lower = config.lower()
     for sni in ALLOWED_SNI:
@@ -94,12 +94,35 @@ def strict_ru_filter(config):
     if not host or not port: return None
     host_str = str(host).lower()
     
-    # Исключение забаненных хостингов
+    # 2. Исключение заведомо заблокированных подсетей хостинга
     for banned in BANNED_KEYWORDS:
         if banned in host_str:
             return None
 
-    return config
+    # Оставляем только системные порты обхода (443 и 8443)
+    if int(port) not in [443, 8443]:
+        return None
+
+    # 3. МОДИФИКАЦИЯ ССЫЛКИ (Внедрение супер-настроек обхода DPI)
+    try:
+        parsed_url = urllib.parse.urlparse(config)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        # Инжектируем агрессивную фрагментацию пакетов (Fragment)
+        query_params['fragment'] = ['10-20,30-50']
+        
+        # Включаем многопоточное маскирование (Mux) для сокрытия паттернов
+        query_params['mux'] = ['max_connections=8']
+        
+        # Пересобираем ссылку обратно
+        new_query = urllib.parse.urlencode(query_params, doseq=True)
+        mutated_config = urllib.parse.urlunparse((
+            parsed_url.scheme, parsed_url.netloc, parsed_url.path,
+            parsed_url.params, new_query, parsed_url.fragment
+        ))
+        return mutated_config
+    except:
+        return config
 
 def main():
     print("[+] Скачивание конфигураций из источников...")
@@ -115,15 +138,15 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Запуск бескомпромиссной фильтрации под ТСПУ...")
+    print(f"[+] Собрано {len(unique_nodes)} нод. Запуск инжектора параметров Fragment...")
 
     working_nodes = []
     for node in unique_nodes:
-        res = strict_ru_filter(node)
-        if res:
-            working_nodes.append(res)
+        mutated_node = transform_and_mutate(node)
+        if mutated_node:
+            working_nodes.append(mutated_node)
 
-    print(f"[+] Фильтрация завершена! Проверено под «белые списки»: {len(working_nodes)} из {len(unique_nodes)}")
+    print(f"[+] Сверхстрогий отбор завершен! Модифицировано элитных нод под Курск: {len(working_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
@@ -132,7 +155,7 @@ def main():
         f.write(output_text)
     with open("merged_base64", "w", encoding="utf-8") as f:
         f.write(b64_output)
-    print("[+] Репозиторий успешно перезаписан. Оставлен только алмазный фонд прокси.")
+    print("[+] Репозиторий успешно обновлен.")
 
 if __name__ == "__main__":
     main()
