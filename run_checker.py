@@ -8,9 +8,7 @@ import urllib.parse
 # ================== НАСТРОЙКИ СВЕРХПРОБИВНОГО ТРАНСПОРТА ==================
 # Разрешенные SNI, которые ТСПУ считает 100% доверенными (системные шлюзы)
 ALLOWED_SNI = [
-    "samsung.com", "apple.com", "microsoft.com", "google.com", "dl.pki.goog",
-    "sberbank.ru", "vk.com", "yandex.ru", "wildberries.ru", "selectel.ru",
-    "timeweb.ru", "beget.com", "cdnvideo.ru", "edgecenter.ru", "speedtest.net"
+    "gosuslugi.ru""kremlin.ru""government.ru""cbr.ru""vk.com""yandex.ru""mail.ru""rutube.ru""ozon.ru""wildberries.ru""market.yandex.ru""megamarket.ru""kuper.ru""samokat.ru""cdek.ru""sberbank.ru""vtb.ru""alfabank.ru""psbank.ru""mtsbank.ru""mironline.ru""vgtrk.ru""matchtv.ru""kommersant.ru""vitrina.tv""mts.ru""megafon.ru""beeline.ru""rt.ru""yota.ru"
 ]
 # =========================================================================
 
