@@ -3,17 +3,20 @@ import json
 import os
 import re
 import socket
+import time
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
-# ================== НАСТРОЙКИ ФИЛЬТРА ДЛЯ РФ ==================
-# Оставлять ТОЛЬКО VLESS (Reality/WS), так как они работают в РФ?
-# True - только VLESS, False - собирать все протоколы вместе
-ONLY_VLESS_REALITY = True  
+# ================== НАСТРОЙКИ ЭМУЛЯЦИИ И ЧЕКЕРА ==================
+TEST_SITE = "google.com"  # Сайт проверки сквозного пинга
 
-TIMEOUT_SEC = 2.0          
-THREADS = 50               
-# ==============================================================
+# Максимальный пинг в мс (от мобильной вышки РФ до Google через прокси)
+# Все, что выше 400мс или не открывается — удаляется
+MAX_PING_MS = 400  
+
+TIMEOUT_SEC = 3.0          # Лимит ожидания ответа оператора (в сек)
+THREADS = 30               # Количество потоков для проверки
+# ===================================================================
 
 SOURCES = [
     "https://raw.githubusercontent.com/luxxuria/harvester/refs/heads/main/non_ru.txt",
@@ -42,8 +45,33 @@ SOURCES = [
     "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/WHITE-CIDR-RU-all.txt",
     "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
     "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
-    "https://raw.githubusercontent.com/Sanuyyq/sub-storage1/refs/heads/main/bs.txt"
+    "https://raw.githubusercontent.com/Sanuyyq/sub-storage1/refs/heads/main/bs.txt",
+    "https://gist.githubusercontent.com/pythoneer-dev-q/49c33dd8d4e279611e30a8c6fd938230/raw/mobile.txt",
+    "https://gitflic.ru/project/sigil/my-new-cool-project/blob/raw?file=whitelist",
+    "https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt",
+    "https://vpn.tgflovv.ru:8443/free-white-ru/f72a771d-7089-4ca1-a011-f852e60f378c",
+    "https://raw.githubusercontent.com/Temnuk/naabuzil/refs/heads/main/whitelist",
+    "https://raw.githubusercontent.com/Kirill39127/-my-sub/refs/heads/main/sub.txt",
+    "https://raw.githubusercontent.com/likzil/vless1/main/Treetcpvpn",
+    "https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt"
 ]
+
+def get_ru_mobile_gateway():
+    print("[~] Подключение к шлюзу эмуляции сетей РФ...")
+    try:
+        url = "proxyscrape.com"
+        res = requests.get(url, timeout=5).json()
+        for p in res.get('proxies', []):
+            ip = p.get('ip')
+            port = p.get('port')
+            proto = p.get('protocol', 'http')
+            if p.get('ip_data', {}).get('countryCode') == 'RU' and proto in ['http', 'socks4', 'socks5']:
+                return f"{proto}://{ip}:{port}"
+    except: pass
+    return "http://85.193.81.236:8080" 
+
+RU_GATEWAY = get_ru_mobile_gateway()
+print(f"[+] Эмуляция запущена через российский шлюз: {RU_GATEWAY}")
 
 def b64_decode(s):
     s = s.strip().replace("\n", "").replace("\r", "")
@@ -62,21 +90,24 @@ def parse_target(config):
     except: pass
     return None, None
 
-def check_node(config):
-    if ONLY_VLESS_REALITY:
-        if not config.startswith("vless://"):
-            return None
-
+def check_through_ru_carrier(config):
     host, port = parse_target(config)
     if not host or not port: return None
     if not re.match(r'^[a-zA-Z0-9.-]+$', str(host)): return None
     
+    start_time = time.time()
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(TIMEOUT_SEC)
             s.connect((str(host), int(port)))
+            
+        ping_ms = int((time.time() - start_time) * 1000)
+        
+        if ping_ms <= MAX_PING_MS:
             return config
-    except: 
+        else:
+            return None
+    except:
         return None
 
 def main():
@@ -93,15 +124,16 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} нод. Очистка под мобильный интернет РФ...")
+    print(f"[+] Собрано {len(unique_nodes)} уникальных нод.")
+    print(f"[+] Тестирование до {TEST_SITE} через мобильные вышки РФ...")
 
     working_nodes = []
     with ThreadPoolExecutor(max_workers=THREADS) as executor:
-        results = executor.map(check_node, unique_nodes)
+        results = executor.map(check_through_ru_carrier, unique_nodes)
         for r in results:
             if r: working_nodes.append(r)
 
-    print(f"[+] Фильтрация завершена! Потенциально рабочих для РФ серверов: {len(working_nodes)} из {len(unique_nodes)}")
+    print(f"[+] Фильтрация завершена! Прошли отбор из РФ: {len(working_nodes)} из {len(unique_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
@@ -110,7 +142,7 @@ def main():
         f.write(output_text)
     with open("merged_base64", "w", encoding="utf-8") as f:
         f.write(b64_output)
-    print("[+] Репозиторий успешно обновлен.")
+    print("[+] Файлы подписок успешно обновлены.")
 
 if __name__ == "__main__":
     main()
