@@ -308,11 +308,11 @@ function ip_info($ip)
             $ip = $ip_address_array[$randomKey]["ip"];
         }
     }
-    $ipinfo = json_decode(
-        file_get_contents("ip-api.com" . $ip),
+        $ipinfo = json_decode(
+        file_get_contents("ip-api.com" . $ip . "?fields=status,countryCode"),
         true
     );
-    return $ipinfo;
+    return isset($ipinfo['status']) && $ipinfo['status'] === 'success' ? ['country' => $ipinfo['countryCode']] : ['country' => 'UN'];
 }
 
 function get_flag($ip)
