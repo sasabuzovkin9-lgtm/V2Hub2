@@ -1,28 +1,39 @@
-name: "MERGE SUBSCRIPTION"
+name: Proxy Aggregator and Checker
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'
-    
+    - cron: '0 */2 * * *' # Автозапуск каждые 6 часов
+  workflow_dispatch: # Возможность ручного запуска
+
 jobs:
-  build:
+  check-proxies:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v2
-      
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '7.4'
-          
-      - name: Execute PHP script
-        run: |
-          php index.php
-          git config --global user.email "yebekhe@gmail.com"
-          git config --global user.name "yebekhe"
-          git config credential.helper store
-          git add -A
-          git commit -m "🚀 Merged Successfully - $(TZ='Asia/Tehran' date '+%Y-%m-%d %H:%M:%S')"
-          git push
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install Python Dependencies
+      run: pip install requests
+
+    - name: Install Sing-Box (Core Checker)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y curl
+        bash <(curl -fsSL sing-box.app)
+        sudo apt-get install -y sing-box
+
+    - name: Run Aggregator and Test Pings
+      run: python run_checker.py
+
+    - name: Push Working Proxies to Repository
+      run: |
+        git config --local user.email "actions@github.com"
+        git config --local user.name "GitHub Actions"
+        git add merged_base64 only_working.txt
+        git commit -m "Удалены нерабочие серверы" || exit 0
+        git push
