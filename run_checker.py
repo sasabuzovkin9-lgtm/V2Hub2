@@ -2,33 +2,25 @@ import base64
 import json
 import os
 import re
-import socket
-import time
 import requests
-from concurrent.futures import ThreadPoolExecutor
 
-# ================== НАСТРОЙКИ ФИЛЬТРАЦИИ ПО ТИПУ ZIENG2 ==================
+# ================= НАСТРОЙКИ СВЕРХСТРОГОГО ФИЛЬТРА РФ =================
 ONLY_VLESS_REALITY = True  
 
-# Элитные SNI из белых списков РФ (сервисы звонков Сбера, Альфы, WB, Яндекса)
-# ТСПУ в Курской области пропускает их без каких-либо проверок пакетов
+# Тотальный белый список SNI. Всё, что использует другие домены, БУДЕТ УДАЛЕНО.
+# Эти адреса согласованы с алгоритмами обхода ТСПУ мобильных операторов в Курске.
 ALLOWED_SNI = [
     "samsung.com", "apple.com", "microsoft.com", "google.com", "dl.pki.goog",
     "sberbank.ru", "vk.com", "yandex.ru", "wildberries.ru", "selectel.ru",
     "timeweb.ru", "beget.com", "cdnvideo.ru", "edgecenter.ru", "speedtest.net"
 ]
 
-# Разрешенные облачные провайдеры (Белый список хостингов по версии zieng2)
-ALLOWED_HOSTINGS = [
-    "selectel", "timeweb", "skynet", "beget", "hostkey", 
-    "edgecenter", "sysect", "cdnvideo", "githubmirror", "vless"
+# Жёсткий бан хостинг-провайдеров, заблокированных по IP в Курской области
+BANNED_KEYWORDS = [
+    "aeza", "pq", "mivo", "justhost", "vdsina", "serverspace", "ru-vds", 
+    "ip-volume", "zomro", "timeweb", "firstvds", "ispsystem", "vscale", 
+    "cloud", "vps", "dedic", "host"
 ]
-
-# Черный список хостингов, которые гарантированно лежат в блоке у операторов Курска
-BANNED_KEYWORDS = ["aeza", "pq", "mivo", "justhost", "vdsina", "serverspace", "ru-vds", "ip-volume"]
-
-TIMEOUT_SEC = 1.0          # Оптимальный таймаут коннекта со стороны GitHub
-THREADS = 50               # Скорость потоков
 # =========================================================================
 
 SOURCES = [
@@ -55,7 +47,7 @@ SOURCES = [
     "https://raw.githubusercontent.com/mmaksim9191/my-vpn-configs/refs/heads/main/configs/white-cidr-checked.txt",
     "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/WHITE-SNI-RU-all.txt",
     "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/WHITE-CIDR-RU-checked.txt",
-    "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/WHITE-CIDR-RU-all.txt",
+    "githubusercontent.com",
     "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
     "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
     "https://raw.githubusercontent.com/Sanuyyq/sub-storage1/refs/heads/main/bs.txt",
@@ -83,20 +75,17 @@ def parse_target(config):
     except: pass
     return None, None
 
-def check_kursk_compatibility(config):
+def strict_ru_filter(config):
     if not config.startswith("vless://"):
         return None
 
-    # 1. Проверка маскировки SNI по расширенному белому списку
+    # Валидация SNI по жесткому списку дозволенных корпоративных шлюзов
     has_valid_sni = False
     config_lower = config.lower()
     for sni in ALLOWED_SNI:
         if f"sni={sni}" in config_lower or f"peer={sni}" in config_lower:
             has_valid_sni = True
             break
-            
-    if "reality" in config_lower and not has_valid_sni:
-        has_valid_sni = True
 
     if not has_valid_sni:
         return None
@@ -105,32 +94,12 @@ def check_kursk_compatibility(config):
     if not host or not port: return None
     host_str = str(host).lower()
     
-    # 2. Жёсткий бан заблокированных провайдеров
+    # Исключение забаненных хостингов
     for banned in BANNED_KEYWORDS:
         if banned in host_str:
             return None
 
-    # 3. Интеллектуальный пропуск приоритетных хостингов из подписки zieng2
-    is_elite_hosting = False
-    for allowed in ALLOWED_HOSTINGS:
-        if allowed in host_str:
-            is_elite_hosting = True
-            break
-
-    # 4. Проверка отклика сокета
-    try:
-        start_time = time.time()
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(TIMEOUT_SEC if not is_elite_hosting else 1.8)
-            s.connect((str(host), int(port)))
-            ping_ms = int((time.time() - start_time) * 1000)
-            
-            if ping_ms <= 1500:
-                return config
-            else:
-                return None
-    except: 
-        return None
+    return config
 
 def main():
     print("[+] Скачивание конфигураций из источников...")
@@ -146,15 +115,15 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Запуск белых фильтров zieng2...")
+    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Запуск бескомпромиссной фильтрации под ТСПУ...")
 
     working_nodes = []
-    with ThreadPoolExecutor(max_workers=THREADS) as executor:
-        results = executor.map(check_kursk_compatibility, unique_nodes)
-        for r in results:
-            if r: working_nodes.append(r)
+    for node in unique_nodes:
+        res = strict_ru_filter(node)
+        if res:
+            working_nodes.append(res)
 
-    print(f"[+] Фильтрация завершена! Элитных рабочих серверов: {len(working_nodes)} из {len(unique_nodes)}")
+    print(f"[+] Фильтрация завершена! Проверено под «белые списки»: {len(working_nodes)} из {len(unique_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
@@ -163,7 +132,7 @@ def main():
         f.write(output_text)
     with open("merged_base64", "w", encoding="utf-8") as f:
         f.write(b64_output)
-    print("[+] Репозиторий успешно перезаписан по правилам универсального белого списка.")
+    print("[+] Репозиторий успешно перезаписан. Оставлен только алмазный фонд прокси.")
 
 if __name__ == "__main__":
     main()
