@@ -1,22 +1,27 @@
 import base64
 import json
 import os
+import random
 import re
 import requests
 import urllib.parse
 
-# ================= МАКСИМАЛЬНЫЙ ФИЛЬТР И МОДИФИКАТОР ДЛЯ РФ =================
+# ================= НАСТРОЙКИ СВЕРХСТРОГОГО КОММЕРЧЕСКОГО ФИЛЬТРА =================
 ONLY_VLESS_REALITY = True  
 
-# Бескомпромиссные SNI из ядра белых списков ТСПУ (сервисы авторизации и CDN)
+# Элитные SNI из ядра белых списков ТСПУ (сервисы авторизации и CDN)
 ALLOWED_SNI = [
     "samsung.com", "apple.com", "microsoft.com", "google.com", "dl.pki.goog",
     "sberbank.ru", "vk.com", "yandex.ru", "wildberries.ru", "selectel.ru",
     "timeweb.ru", "beget.com", "cdnvideo.ru", "edgecenter.ru", "speedtest.net"
 ]
 
-# Точечный бан полностью мертвых подсетей хостинга
-BANNED_KEYWORDS = ["aeza", "pq", "mivo", "justhost", "vdsina"]
+# Полный бан подсетей хостингов, заблокированных регулятором в Курской области
+BANNED_KEYWORDS = [
+    "aeza", "pq", "mivo", "justhost", "vdsina", "serverspace", "ru-vds", 
+    "ip-volume", "zomro", "timeweb", "firstvds", "ispsystem", "vscale", 
+    "cloud", "vps", "dedic", "host"
+]
 # ============================================================================
 
 SOURCES = [
@@ -38,19 +43,21 @@ SOURCES = [
     "https://raw.githubusercontent.com/gergew452/Generation-Liberty/refs/heads/main/githubmirror/best.txt",
     "https://raw.githubusercontent.com/FLAT447/v2ray-lists/refs/heads/main/githubmirror/1.txt",
     "https://raw.githubusercontent.com/nikita29a/FreeProxyList/refs/heads/main/mirror/1.txt",
+    "https://obwl.obprojects.lol/sub.txt",
     "githubusercontent.com",
     "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/refs/heads/main/checked/RU_Best/ru_white_all_WHITE.txt",
     "https://raw.githubusercontent.com/mmaksim9191/my-vpn-configs/refs/heads/main/configs/white-cidr-checked.txt",
     "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/WHITE-SNI-RU-all.txt",
     "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/WHITE-CIDR-RU-checked.txt",
-    "githubusercontent.com",
+    "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/WHITE-CIDR-RU-all.txt",
     "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
     "https://raw.githubusercontent.com/Kirillo4ka/eavevpn-configs/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
     "https://raw.githubusercontent.com/Sanuyyq/sub-storage1/refs/heads/main/bs.txt",
+    "https://gitverse.ru/api/repos/rstnnl/sb/raw/branch/master/gen.txt",
     "https://gist.githubusercontent.com/pythoneer-dev-q/49c33dd8d4e279611e30a8c6fd938230/raw/mobile.txt",
     "https://gitflic.ru/project/sigil/my-new-cool-project/blob/raw?file=whitelist",
     "https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt",
-    "tgflovv.ru",
+    "https://vpn.tgflovv.ru:8443/free-white-ru/f72a771d-7089-4ca1-a011-f852e60f378c",
     "https://raw.githubusercontent.com/Temnuk/naabuzil/refs/heads/main/whitelist",
     "https://raw.githubusercontent.com/Kirill39127/-my-sub/refs/heads/main/sub.txt",
     "https://raw.githubusercontent.com/likzil/vless1/main/Treetcpvpn",
@@ -75,7 +82,7 @@ def transform_and_mutate(config):
     if not config.startswith("vless://"):
         return None
 
-    # Проверка маскировки
+    # 1. Проверка маскировки SNI
     has_valid_sni = False
     config_lower = config.lower()
     for sni in ALLOWED_SNI:
@@ -90,23 +97,42 @@ def transform_and_mutate(config):
     if not host or not port: return None
     host_str = str(host).lower()
     
+    # 2. Исключение забаненных подсетей
     for banned in BANNED_KEYWORDS:
         if banned in host_str:
             return None
 
-    # Принудительная инжекция фрагментации и мультиканальности для обхода мобильного DPI
+    # Оставляем только системные порты обхода (443 и 8443)
+    if int(port) not in [443, 8443]:
+        return None
+
+    # 3. КОММЕРЧЕСКАЯ МУТАЦИЯ ССЫЛКИ (Рандомизация Fragment под каждую ноду)
     try:
         parsed_url = urllib.parse.urlparse(config)
         query_params = urllib.parse.parse_qs(parsed_url.query)
         
-        query_params['fragment'] = ['1-3,5-15']
-        query_params['timeout'] = ['10-20']
+        # Генерируем случайный диапазон фрагментов, сбивающий ИИ-анализ ТСПУ
+        f_start = random.randint(1, 4)
+        f_mid = random.randint(5, 12)
+        f_end = random.randint(15, 35)
+        f_last = random.randint(40, 65)
+        
+        # Случайный таймаут задержки пакетов в миллисекундах
+        t_start = random.randint(5, 15)
+        t_end = random.randint(20, 35)
+        
+        query_params['fragment'] = [f"{f_start}-{f_mid},{f_end}-{f_last}"]
+        query_params['timeout'] = [f"{t_start}-{t_end}"]
         query_params['mux'] = ['max_connections=8']
+        
+        # Генерируем маскирующее техническое имя сервера
+        node_id = random.randint(100, 999)
+        server_name = f"SYS-SERVICE-TR-{node_id}"
         
         new_query = urllib.parse.urlencode(query_params, doseq=True)
         mutated_config = urllib.parse.urlunparse((
             parsed_url.scheme, parsed_url.netloc, parsed_url.path,
-            parsed_url.params, new_query, parsed_url.fragment
+            parsed_url.params, new_query, server_name
         ))
         return mutated_config
     except:
@@ -126,7 +152,7 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} нод. Запуск инжектора параметров обхода...")
+    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Запуск коммерческой мутации сигнатур...")
 
     working_nodes = []
     for node in unique_nodes:
@@ -134,7 +160,7 @@ def main():
         if mutated_node:
             working_nodes.append(mutated_node)
 
-    print(f"[+] Сверхстрогий отбор завершен! Записано нод под Курск: {len(working_nodes)}")
+    print(f"[+] Сверхстрогий отбор завершен! Сгенерировано элитных нод под Курск: {len(working_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
