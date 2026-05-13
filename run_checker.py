@@ -3,23 +3,14 @@ import json
 import os
 import re
 import requests
+import urllib.parse
 
-# ================= НАСТРОЙКИ СВЕРХСТРОГОГО ФИЛЬТРА РФ =================
-ONLY_VLESS_REALITY = True  
-
-# Тотальный белый список SNI. Всё, что использует другие домены, БУДЕТ УДАЛЕНО.
-# Эти адреса согласованы с алгоритмами обхода ТСПУ мобильных операторов в РФ.
+# ================== НАСТРОЙКИ СВЕРХПРОБИВНОГО ТРАНСПОРТА ==================
+# Разрешенные SNI, которые ТСПУ считает 100% доверенными (системные шлюзы)
 ALLOWED_SNI = [
     "samsung.com", "apple.com", "microsoft.com", "google.com", "dl.pki.goog",
     "sberbank.ru", "vk.com", "yandex.ru", "wildberries.ru", "selectel.ru",
     "timeweb.ru", "beget.com", "cdnvideo.ru", "edgecenter.ru", "speedtest.net"
-]
-
-# Жёсткий бан хостинг-провайдеров, заблокированных по IP в Курской области
-BANNED_KEYWORDS = [
-    "aeza", "pq", "mivo", "justhost", "vdsina", "serverspace", "ru-vds", 
-    "ip-volume", "zomro", "timeweb", "firstvds", "ispsystem", "vscale", 
-    "cloud", "vps", "dedic", "host"
 ]
 # =========================================================================
 
@@ -79,34 +70,45 @@ def parse_target(config):
     except: pass
     return None, None
 
-def strict_ru_filter(config):
+def mutate_to_websocket(config):
     if not config.startswith("vless://"):
         return None
 
-    # Валидация SNI по жесткому списку дозволенных шлюзов
-    has_valid_sni = False
     config_lower = config.lower()
-    for sni in ALLOWED_SNI:
-        if f"sni={sni}" in config_lower or f"peer={sni}" in config_lower:
-            has_valid_sni = True
-            break
-
+    has_valid_sni = any(f"sni={sni}" in config_lower or f"peer={sni}" in config_lower for sni in ALLOWED_SNI)
+    
     if not has_valid_sni:
         return None
 
-    host, port = parse_target(config)
-    if not host or not port: return None
-    host_str = str(host).lower()
-    
-    # Исключение забаненных хостингов
-    for banned in BANNED_KEYWORDS:
-        if banned in host_str:
-            return None
-
-    return config
+    try:
+        parsed_url = urllib.parse.urlparse(config)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        if 'type' not in query_params:
+            query_params['type'] = ['grpc']
+            query_params['serviceName'] = ['grpc-service']
+        
+        # МИКРО-ФРАГМЕНТАЦИЯ (Разделение на сверхмалые куски, ломающие анализ ТСПУ)
+        query_params['fragment'] = ['1-2,3-8']
+        query_params['timeout'] = ['5-15']
+        
+        # Активация многопоточного мультиплексирования
+        query_params['mux'] = ['max_connections=8']
+        
+        # Подмена отпечатка браузера на мобильный Chrome (для мимикрии под вышки)
+        query_params['fp'] = ['chrome']
+        
+        new_query = urllib.parse.urlencode(query_params, doseq=True)
+        mutated_config = urllib.parse.urlunparse((
+            parsed_url.scheme, parsed_url.netloc, parsed_url.path,
+            parsed_url.params, new_query, f"KURSK-PROBIV-NODE-{os.urandom(2).hex().upper()}"
+        ))
+        return mutated_config
+    except:
+        return config
 
 def main():
-    print("[+] Скачивание конфигураций из источников...")
+    print("[+] Скачивание исходных баз серверов...")
     all_nodes = []
     for url in SOURCES:
         try:
@@ -119,15 +121,15 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Запуск фильтрации под ТСПУ...")
+    print(f"[+] Собрано {len(unique_nodes)} нод. Запуск транспортной gRPC/WS мутации...")
 
     working_nodes = []
     for node in unique_nodes:
-        res = strict_ru_filter(node)
-        if res:
-            working_nodes.append(res)
+        mutated = mutate_to_websocket(node)
+        if mutated:
+            working_nodes.append(mutated)
 
-    print(f"[+] Фильтрация завершена! Проверено под «белые списки»: {len(working_nodes)} из {len(unique_nodes)}")
+    print(f"[+] Мутация завершена. Подготовлено серверов под Курск: {len(working_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
@@ -136,7 +138,7 @@ def main():
         f.write(output_text)
     with open("merged_base64", "w", encoding="utf-8") as f:
         f.write(b64_output)
-    print("[+] Репозиторий успешно перезаписан. Оставлен только чистый фонд прокси.")
+    print("[+] Репозиторий успешно перезаписан.")
 
 if __name__ == "__main__":
     main()
