@@ -3,10 +3,21 @@ import json
 import os
 import re
 import socket
+import time
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
-# ================== НАСТРОЙКИ ЧЕКЕРА ==================
+# ================== НАСТРОЙКИ ЧЕКЕРА И ФИЛЬТРАЦИИ ==================
+TEST_SITE = "google.com"  # Сайт, до которого измеряется пинг
+
+# МАКСИМАЛЬНО ДОПУСТИМЫЙ ПИНГ (в миллисекундах)
+# Все серверы с пингом выше этого значения будут УДАЛЕНЫ
+MAX_PING_MS = 400  
+
+TIMEOUT_SEC = 2.5          # Общий таймаут ожидания (в секундах)
+THREADS = 50               # Количество параллельных потоков
+# ===================================================================
+
 SOURCES = [
     "https://raw.githubusercontent.com/luxxuria/harvester/refs/heads/main/non_ru.txt",
     "https://raw.githubusercontent.com/prominbro/sub/refs/heads/main/212.txt",
@@ -37,11 +48,6 @@ SOURCES = [
     "https://raw.githubusercontent.com/Sanuyyq/sub-storage1/refs/heads/main/bs.txt"
 ]
 
-TEST_SITE = "google.com"  # Сайт проверки
-TIMEOUT_SEC = 2            # Ожидание ответа от прокси (в сек)
-THREADS = 40               # Количество потоков для быстрой проверки
-# ======================================================
-
 def b64_decode(s):
     s = s.strip().replace("\n", "").replace("\r", "")
     pad = len(s) % 4
@@ -59,13 +65,24 @@ def parse_target(config):
     except: pass
     return None, None
 
-def ping_check(config):
+def http_ping_check(config):
     host, port = parse_target(config)
     if not host or not port: return None
+    if not re.match(r'^[a-zA-Z0-9.-]+$', str(host)): return None
+    
+    start_time = time.time()
     try:
-        with socket.create_connection((host, port), timeout=TIMEOUT_SEC):
-            return config
-    except: return None
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(TIMEOUT_SEC)
+            s.connect((str(host), int(port)))
+            ping_ms = int((time.time() - start_time) * 1000)
+            
+            if ping_ms <= MAX_PING_MS:
+                return config
+            else:
+                return None
+    except: 
+        return None
 
 def main():
     print("[+] Скачивание конфигураций...")
@@ -81,15 +98,15 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Запуск пинг-теста...")
+    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Измеряем пинг до {TEST_SITE}...")
 
     working_nodes = []
     with ThreadPoolExecutor(max_workers=THREADS) as executor:
-        results = executor.map(ping_check, unique_nodes)
+        results = executor.map(http_ping_check, unique_nodes)
         for r in results:
             if r: working_nodes.append(r)
 
-    print(f"[+] Проверка завершена! Рабочих серверов: {len(working_nodes)} из {len(unique_nodes)}")
+    print(f"[+] Фильтрация завершена! Быстрых рабочих серверов: {len(working_nodes)} из {len(unique_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
@@ -98,7 +115,7 @@ def main():
         f.write(output_text)
     with open("merged_base64", "w", encoding="utf-8") as f:
         f.write(b64_output)
-    print("[+] Файлы обновлены.")
+    print("[+] Репозиторий успешно обновлен.")
 
 if __name__ == "__main__":
     main()
