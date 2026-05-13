@@ -309,7 +309,7 @@ function ip_info($ip)
         }
     }
     $ipinfo = json_decode(
-        file_get_contents("https://api.country.is/" . $ip),
+        file_get_contents("ip-api.com" . $ip),
         true
     );
     return $ipinfo;
