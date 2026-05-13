@@ -5,10 +5,18 @@ import re
 import requests
 import urllib.parse
 
-# ================== НАСТРОЙКИ СВЕРХПРОБИВНОГО ТРАНСПОРТА ==================
-# Разрешенные SNI, которые ТСПУ считает 100% доверенными (системные шлюзы)
+# ================= НАСТРОЙКИ СВЕРХСТРОГОГО РУ-ФИЛЬТРА =================
+ONLY_VLESS_REALITY = True  
+
+# Тотальный белый список ТОЛЬКО российских SNI (маскировок)
+# Всё, что использует зарубежные домены (google, apple и т.д.), БУДЕТ УДАЛЕНО.
 ALLOWED_SNI = [
-    "gosuslugi.ru""kremlin.ru""government.ru""cbr.ru""vk.com""yandex.ru""mail.ru""rutube.ru""ozon.ru""wildberries.ru""market.yandex.ru""megamarket.ru""kuper.ru""samokat.ru""cdek.ru""sberbank.ru""vtb.ru""alfabank.ru""psbank.ru""mtsbank.ru""mironline.ru""vgtrk.ru""matchtv.ru""kommersant.ru""vitrina.tv""mts.ru""megafon.ru""beeline.ru""rt.ru""yota.ru"
+    "gosuslugi.ru", "kremlin.ru", "government.ru", "cbr.ru", "vk.com", 
+    "yandex.ru", "mail.ru", "rutube.ru", "ozon.ru", "wildberries.ru", 
+    "market.yandex.ru", "megamarket.ru", "kuper.ru", "samokat.ru", "cdek.ru", 
+    "sberbank.ru", "vtb.ru", "alfabank.ru", "psbank.ru", "mtsbank.ru", 
+    "mironline.ru", "vgtrk.ru", "matchtv.ru", "kommersant.ru", "vitrina.tv", 
+    "mts.ru", "megafon.ru", "beeline.ru", "rt.ru", "yota.ru"
 ]
 # =========================================================================
 
@@ -68,14 +76,18 @@ def parse_target(config):
     except: pass
     return None, None
 
-def mutate_to_websocket(config):
+def strict_ru_sni_filter(config):
     if not config.startswith("vless://"):
         return None
 
+    has_russian_sni = False
     config_lower = config.lower()
-    has_valid_sni = any(f"sni={sni}" in config_lower or f"peer={sni}" in config_lower for sni in ALLOWED_SNI)
-    
-    if not has_valid_sni:
+    for sni in ALLOWED_SNI:
+        if f"sni={sni}" in config_lower or f"peer={sni}" in config_lower:
+            has_russian_sni = True
+            break
+
+    if not has_russian_sni:
         return None
 
     try:
@@ -86,27 +98,22 @@ def mutate_to_websocket(config):
             query_params['type'] = ['grpc']
             query_params['serviceName'] = ['grpc-service']
         
-        # МИКРО-ФРАГМЕНТАЦИЯ (Разделение на сверхмалые куски, ломающие анализ ТСПУ)
         query_params['fragment'] = ['1-2,3-8']
         query_params['timeout'] = ['5-15']
-        
-        # Активация многопоточного мультиплексирования
         query_params['mux'] = ['max_connections=8']
-        
-        # Подмена отпечатка браузера на мобильный Chrome (для мимикрии под вышки)
         query_params['fp'] = ['chrome']
         
         new_query = urllib.parse.urlencode(query_params, doseq=True)
         mutated_config = urllib.parse.urlunparse((
             parsed_url.scheme, parsed_url.netloc, parsed_url.path,
-            parsed_url.params, new_query, f"KURSK-PROBIV-NODE-{os.urandom(2).hex().upper()}"
+            parsed_url.params, new_query, f"KURSK-RU-SNI-{os.urandom(2).hex().upper()}"
         ))
         return mutated_config
     except:
         return config
 
 def main():
-    print("[+] Скачивание исходных баз серверов...")
+    print("[+] Скачивание конфигураций из 39 источников...")
     all_nodes = []
     for url in SOURCES:
         try:
@@ -119,15 +126,15 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} нод. Запуск транспортной gRPC/WS мутации...")
+    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Фильтрация строго по российским SNI...")
 
     working_nodes = []
     for node in unique_nodes:
-        mutated = mutate_to_websocket(node)
-        if mutated:
-            working_nodes.append(mutated)
+        res = strict_ru_sni_filter(node)
+        if res:
+            working_nodes.append(res)
 
-    print(f"[+] Мутация завершена. Подготовлено серверов под Курск: {len(working_nodes)}")
+    print(f"[+] Фильтрация завершена! Найдено серверов с РУ-маскировкой: {len(working_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
@@ -136,7 +143,7 @@ def main():
         f.write(output_text)
     with open("merged_base64", "w", encoding="utf-8") as f:
         f.write(b64_output)
-    print("[+] Репозиторий успешно перезаписан.")
+    print("[+] Репозиторий успешно обновлен под белые списки РФ.")
 
 if __name__ == "__main__":
     main()
