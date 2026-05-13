@@ -2,7 +2,7 @@ name: Proxy Aggregator and Checker
 
 on:
   schedule:
-    - cron: '0 */1 * * *' # Автозапуск каждые 6 часов
+    - cron: '0 */2 * * *' # Автозапуск каждые 6 часов
   workflow_dispatch: # Возможность ручного запуска
 
 jobs:
