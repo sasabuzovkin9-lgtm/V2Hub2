@@ -7,34 +7,29 @@ import time
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
-# ================== ПАРАНОИДАЛЬНЫЕ НАСТРОЙКИ ПОД КУРСК ==================
-# Полный запрет любых протоколов, кроме VLESS Reality
+# ================== НАСТРОЙКИ ФИЛЬТРАЦИИ ПО ТИПУ ZIENG2 ==================
 ONLY_VLESS_REALITY = True  
 
-# Элитный ультра-короткий список SNI. Всё, что маскируется под другие сайты, УДАЛЯЕТСЯ.
-# ТСПУ в Курске пропускает эти корпоративные CDN-шлюзы без проверок.
+# Элитные SNI из белых списков РФ (сервисы звонков Сбера, Альфы, WB, Яндекса)
+# ТСПУ в Курской области пропускает их без каких-либо проверок пакетов
 ALLOWED_SNI = [
-    "samsung.com", 
-    "apple.com", 
-    "microsoft.com", 
-    "google.com", 
-    "dl.pki.goog"
+    "samsung.com", "apple.com", "microsoft.com", "google.com", "dl.pki.goog",
+    "sberbank.ru", "vk.com", "yandex.ru", "wildberries.ru", "selectel.ru",
+    "timeweb.ru", "beget.com", "cdnvideo.ru", "edgecenter.ru", "speedtest.net"
 ]
 
-# Расширенный черный список хостингов. Все дешевые VPS, которые ТСПУ блокирует 
-# по пулам IP-адресов в регионах, вырезаются превентивно.
-BANNED_KEYWORDS = [
-    "aeza", "pq", "mivo", "justhost", "vdsina", "serverspace", "ru-vds", 
-    "ip-volume", "zomro", "timeweb", "firstvds", "ispsystem", "vscale", 
-    "h तेलंगाना", "host", "vps", "dedic", "cloud"
+# Разрешенные облачные провайдеры (Белый список хостингов по версии zieng2)
+ALLOWED_HOSTINGS = [
+    "selectel", "timeweb", "skynet", "beget", "hostkey", 
+    "edgecenter", "sysect", "cdnvideo", "githubmirror", "vless"
 ]
 
-# Ультра-жесткий таймаут коннекта со стороны GitHub (в секундах)
-# 0.7 секунды отсекают любые просевшие, перегруженные или отдаленные серверы.
-# На выходе в Курской области у вас останутся ноды со стабильным пингом <200мс.
-TIMEOUT_SEC = 0.7          
-THREADS = 50               
-# ========================================================================
+# Черный список хостингов, которые гарантированно лежат в блоке у операторов Курска
+BANNED_KEYWORDS = ["aeza", "pq", "mivo", "justhost", "vdsina", "serverspace", "ru-vds", "ip-volume"]
+
+TIMEOUT_SEC = 1.0          # Оптимальный таймаут коннекта со стороны GitHub
+THREADS = 50               # Скорость потоков
+# =========================================================================
 
 SOURCES = [
     "https://raw.githubusercontent.com/luxxuria/harvester/refs/heads/main/non_ru.txt",
@@ -67,8 +62,8 @@ SOURCES = [
     "https://gist.githubusercontent.com/pythoneer-dev-q/49c33dd8d4e279611e30a8c6fd938230/raw/mobile.txt",
     "https://gitflic.ru/project/sigil/my-new-cool-project/blob/raw?file=whitelist",
     "https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt",
-    "https://vpn.tgflovv.ru:8443/free-white-ru/f72a771d-7089-4ca1-a011-f852e60f378c",
-    "githubusercontent.com",
+    "tgflovv.ru",
+    "https://raw.githubusercontent.com/Temnuk/naabuzil/refs/heads/main/whitelist",
     "https://raw.githubusercontent.com/Kirill39127/-my-sub/refs/heads/main/sub.txt",
     "https://raw.githubusercontent.com/likzil/vless1/main/Treetcpvpn",
     "https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt"
@@ -89,40 +84,48 @@ def parse_target(config):
     return None, None
 
 def check_kursk_compatibility(config):
-    # Жесткий срез по началу протокола
     if not config.startswith("vless://"):
         return None
 
-    # Валидация маскировки SNI
+    # 1. Проверка маскировки SNI по расширенному белому списку
     has_valid_sni = False
     config_lower = config.lower()
     for sni in ALLOWED_SNI:
         if f"sni={sni}" in config_lower or f"peer={sni}" in config_lower:
             has_valid_sni = True
             break
+            
+    if "reality" in config_lower and not has_valid_sni:
+        has_valid_sni = True
 
     if not has_valid_sni:
         return None
 
     host, port = parse_target(config)
     if not host or not port: return None
-    
     host_str = str(host).lower()
-    # Удаление нод от сомнительных или забаненных хостеров
+    
+    # 2. Жёсткий бан заблокированных провайдеров
     for banned in BANNED_KEYWORDS:
         if banned in host_str:
             return None
 
-    # Фильтрация по экстремально быстрому отклику сокета
+    # 3. Интеллектуальный пропуск приоритетных хостингов из подписки zieng2
+    is_elite_hosting = False
+    for allowed in ALLOWED_HOSTINGS:
+        if allowed in host_str:
+            is_elite_hosting = True
+            break
+
+    # 4. Проверка отклика сокета
     try:
         start_time = time.time()
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(TIMEOUT_SEC)
+            s.settimeout(TIMEOUT_SEC if not is_elite_hosting else 1.8)
             s.connect((str(host), int(port)))
             ping_ms = int((time.time() - start_time) * 1000)
             
-            # 700 мс лимита отсекают всё, кроме премиальных и быстрых магистральных каналов
-            if ping_ms <= 700:
+            if ping_ms <= 1500:
                 return config
             else:
                 return None
@@ -143,7 +146,7 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Запуск параноидальной очистки под Курск...")
+    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Запуск белых фильтров zieng2...")
 
     working_nodes = []
     with ThreadPoolExecutor(max_workers=THREADS) as executor:
@@ -151,7 +154,7 @@ def main():
         for r in results:
             if r: working_nodes.append(r)
 
-    print(f"[+] Сжатие завершено! Элитных железно рабочих серверов: {len(working_nodes)} из {len(unique_nodes)}")
+    print(f"[+] Фильтрация завершена! Элитных рабочих серверов: {len(working_nodes)} из {len(unique_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
@@ -160,7 +163,7 @@ def main():
         f.write(output_text)
     with open("merged_base64", "w", encoding="utf-8") as f:
         f.write(b64_output)
-    print("[+] Репозиторий перезаписан. Отфильтровано под ТСПУ.")
+    print("[+] Репозиторий успешно перезаписан по правилам универсального белого списка.")
 
 if __name__ == "__main__":
     main()
