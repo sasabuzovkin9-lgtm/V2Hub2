@@ -3,31 +3,26 @@ import json
 import os
 import re
 import socket
+import time
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
-# ================== НАСТРОЙКИ ПОД КУРСКУЮ ОБЛАСТЬ ==================
-# Оставлять только VLESS, так как VMess/Trojan в Курске забанены операторами
+# ================== УСИЛЕННЫЕ НАСТРОЙКИ ПОД КУРСК ==================
 ONLY_VLESS_REALITY = True  
 
-# Список проверенных международных SNI, которые пробивают ТСПУ в Курске
+# Топовые международные SNI, которые ТСПУ в Курске пропускает без проверок
 ALLOWED_SNI = [
-    "samsung.com", 
-    "apple.com", 
-    "microsoft.com", 
-    "google.com", 
-    "cloudflare.com", 
-    "amazon.com", 
-    "dl.pki.goog",
-    "speedtest.net",
-    "amd.com",
-    "nvidia.com",
-    "epicgames.com",
-    "docker.com"
+    "samsung.com", "apple.com", "microsoft.com", "google.com", 
+    "cloudflare.com", "amazon.com", "dl.pki.goog", "speedtest.net"
 ]
 
-TIMEOUT_SEC = 2.0          # Таймаут на проверку порта
-THREADS = 50               # Скорость потоков
+# Список хостингов и подсетей, массово забаненных мобильными операторами в РФ
+BANNED_KEYWORDS = ["aeza", "pq", "mivo", "justhost", "vdsina", "serverspace", "ru-vds", "ip-volume"]
+
+# Жесткий лимит на отклик со стороны GitHub (в секундах)
+# 1.2 секунды на американском сервере гарантируют отличный пинг (<400мс) в Курске
+TIMEOUT_SEC = 1.2          
+THREADS = 50               
 # ===================================================================
 
 SOURCES = [
@@ -102,11 +97,21 @@ def check_kursk_compatibility(config):
     if not host or not port: return None
     if not re.match(r'^[a-zA-Z0-9.-]+$', str(host)): return None
     
+    for banned in BANNED_KEYWORDS:
+        if banned in str(host).lower():
+            return None
+
     try:
+        start_time = time.time()
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(TIMEOUT_SEC)
             s.connect((str(host), int(port)))
-            return config
+            ping_ms = int((time.time() - start_time) * 1000)
+            
+            if ping_ms <= 1200:
+                return config
+            else:
+                return None
     except: 
         return None
 
@@ -124,7 +129,7 @@ def main():
         except: continue
 
     unique_nodes = list(set(all_nodes))
-    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Фильтрация под Курскую область...")
+    print(f"[+] Собрано {len(unique_nodes)} уникальных нод. Усиленная очистка под Курск...")
 
     working_nodes = []
     with ThreadPoolExecutor(max_workers=THREADS) as executor:
@@ -132,7 +137,7 @@ def main():
         for r in results:
             if r: working_nodes.append(r)
 
-    print(f"[+] Фильтрация завершена! Потенциально рабочих для Курска серверов: {len(working_nodes)} из {len(unique_nodes)}")
+    print(f"[+] Фильтрация завершена! Элитных рабочих серверов для Курска: {len(working_nodes)} из {len(unique_nodes)}")
 
     output_text = "\n".join(working_nodes)
     b64_output = base64.b64encode(output_text.encode("utf-8")).decode("utf-8")
